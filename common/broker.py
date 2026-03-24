@@ -15,8 +15,6 @@ import logging
 
 import redis.asyncio as aioredis
 
-from common.config import Config
-
 logger = logging.getLogger(__name__)
 
 RESULT_CHANNEL_PREFIX = "result:"
@@ -27,8 +25,15 @@ class BackpressureError(Exception):
 
 
 class Broker:
-    def __init__(self, redis_url: str):
+    def __init__(
+        self,
+        redis_url: str,
+        max_stream_length: int = 10_000,
+        consumer_block_ms: int = 5_000,
+    ):
         self._redis_url = redis_url
+        self._max_stream_length = max_stream_length
+        self._consumer_block_ms = consumer_block_ms
         self._redis: aioredis.Redis | None = None
 
     async def connect(self) -> None:
@@ -52,16 +57,16 @@ class Broker:
 
     async def publish_task(self, stream: str, data: dict) -> str:
         length = await self.redis.xlen(stream)
-        if length >= Config.MAX_STREAM_LENGTH:
+        if length >= self._max_stream_length:
             logger.warning(
                 "backpressure_triggered",
                 extra={"stream": stream, "length": length},
             )
             raise BackpressureError(
-                f"Stream '{stream}' at capacity ({length}/{Config.MAX_STREAM_LENGTH})"
+                f"Stream '{stream}' at capacity ({length}/{self._max_stream_length})"
             )
         msg_id = await self.redis.xadd(
-            stream, data, maxlen=Config.MAX_STREAM_LENGTH
+            stream, data, maxlen=self._max_stream_length
         )
         logger.debug("task_published", extra={"stream": stream, "msg_id": msg_id})
         return msg_id
@@ -121,7 +126,7 @@ class Broker:
             consumer,
             {stream: ">"},
             count=count,
-            block=Config.CONSUMER_BLOCK_MS,
+            block=self._consumer_block_ms,
         )
 
     async def ack(self, stream: str, group: str, msg_id: str) -> None:

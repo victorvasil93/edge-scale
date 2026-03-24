@@ -8,6 +8,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY proto/ proto/
 COPY common/ common/
 COPY services/worker/main.py .
+COPY services/worker/config.py .
 COPY services/worker/text_worker.py .
 COPY services/worker/file_worker.py .
 

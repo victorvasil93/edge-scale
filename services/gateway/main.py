@@ -12,7 +12,9 @@ import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+_here = Path(__file__).resolve().parent
+sys.path.insert(0, str(_here))
+sys.path.insert(0, str(_here.parent.parent))
 
 import grpc
 from grpc import aio as grpc_aio
@@ -22,8 +24,8 @@ from pydantic import BaseModel
 
 import edgescale_pb2
 import edgescale_pb2_grpc
-from common.config import Config
 from common.observability import setup_logging, get_logger
+from config import GatewayConfig
 
 logger = get_logger(__name__)
 
@@ -41,8 +43,9 @@ class TextPayload(BaseModel):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    setup_logging()
-    target = f"{Config.INGESTION_GRPC_HOST}:{Config.INGESTION_GRPC_PORT}"
+    cfg = GatewayConfig()
+    setup_logging(cfg.LOG_LEVEL)
+    target = f"{cfg.INGESTION_GRPC_HOST}:{cfg.INGESTION_GRPC_PORT}"
     app.state.channel = grpc_aio.insecure_channel(
         target,
         options=[
@@ -157,9 +160,10 @@ async def upload_file(file: UploadFile = File(...)):
 if __name__ == "__main__":
     import uvicorn
 
+    cfg = GatewayConfig()
     uvicorn.run(
         "main:app",
         host="0.0.0.0",
-        port=Config.GATEWAY_PORT,
+        port=cfg.GATEWAY_PORT,
         log_level="info",
     )

@@ -19,8 +19,8 @@ sys.path.insert(0, str(_here))
 sys.path.insert(0, str(_here.parent.parent))
 
 from common.broker import Broker
-from common.config import Config
 from common.observability import setup_logging, get_logger
+from config import WorkerConfig
 
 from text_worker import process as text_process
 from file_worker import process as file_process
@@ -29,13 +29,19 @@ logger = get_logger(__name__)
 
 
 async def run() -> None:
-    setup_logging()
-    broker = Broker(Config.REDIS_URL)
+    cfg = WorkerConfig()
+    setup_logging(cfg.LOG_LEVEL)
+
+    broker = Broker(
+        cfg.REDIS_URL,
+        max_stream_length=cfg.MAX_STREAM_LENGTH,
+        consumer_block_ms=cfg.CONSUMER_BLOCK_MS,
+    )
     await broker.connect()
 
-    group = Config.WORKER_CONSUMER_GROUP
+    group = cfg.WORKER_CONSUMER_GROUP
     instance = os.getenv("HOSTNAME", uuid.uuid4().hex[:8])
-    concurrency = Config.WORKER_CONCURRENCY
+    concurrency = cfg.WORKER_CONCURRENCY
 
     tasks: list[asyncio.Task] = []
 

@@ -15,8 +15,9 @@ import sys
 import uuid
 from pathlib import Path
 
-# Resolve project root so imports work from any working directory
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+_root = Path(__file__).resolve().parent.parent.parent
+sys.path.insert(0, str(_root))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import grpc
 from grpc import aio as grpc_aio
@@ -24,15 +25,16 @@ from grpc import aio as grpc_aio
 import edgescale_pb2
 import edgescale_pb2_grpc
 from common.broker import Broker, BackpressureError
-from common.config import Config
 from common.observability import setup_logging, get_logger
+from config import IngestionConfig
 
 logger = get_logger(__name__)
 
 
 class EdgeScaleServicer(edgescale_pb2_grpc.EdgeScaleServiceServicer):
-    def __init__(self, broker: Broker):
+    def __init__(self, broker: Broker, cfg: IngestionConfig):
         self.broker = broker
+        self.cfg = cfg
 
     # ── Heartbeat (fire-and-forget) ──────────────────────────────────────
 
@@ -67,7 +69,7 @@ class EdgeScaleServicer(edgescale_pb2_grpc.EdgeScaleServiceServicer):
 
         try:
             result = await self.broker.wait_for_result(
-                pubsub, timeout=Config.RESULT_TIMEOUT
+                pubsub, timeout=self.cfg.RESULT_TIMEOUT
             )
             logger.info(
                 "analyze_text_done",
@@ -126,7 +128,7 @@ class EdgeScaleServicer(edgescale_pb2_grpc.EdgeScaleServiceServicer):
 
         try:
             result = await self.broker.wait_for_result(
-                pubsub, timeout=Config.FILE_RESULT_TIMEOUT
+                pubsub, timeout=self.cfg.FILE_RESULT_TIMEOUT
             )
             logger.info(
                 "file_analysis_done",
@@ -145,8 +147,14 @@ class EdgeScaleServicer(edgescale_pb2_grpc.EdgeScaleServiceServicer):
 # ── Server bootstrap ─────────────────────────────────────────────────────
 
 async def serve() -> None:
-    setup_logging()
-    broker = Broker(Config.REDIS_URL)
+    cfg = IngestionConfig()
+    setup_logging(cfg.LOG_LEVEL)
+
+    broker = Broker(
+        cfg.REDIS_URL,
+        max_stream_length=cfg.MAX_STREAM_LENGTH,
+        consumer_block_ms=cfg.CONSUMER_BLOCK_MS,
+    )
     await broker.connect()
 
     server = grpc_aio.server(
@@ -158,10 +166,10 @@ async def serve() -> None:
         ],
     )
     edgescale_pb2_grpc.add_EdgeScaleServiceServicer_to_server(
-        EdgeScaleServicer(broker), server
+        EdgeScaleServicer(broker, cfg), server
     )
 
-    addr = f"0.0.0.0:{Config.GRPC_PORT}"
+    addr = f"0.0.0.0:{cfg.GRPC_PORT}"
     server.add_insecure_port(addr)
     logger.info("ingestion_starting", extra={"addr": addr})
     await server.start()

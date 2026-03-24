@@ -29,15 +29,12 @@ class StructuredFormatter(logging.Formatter):
         return json.dumps(entry, default=str)
 
 
-def setup_logging(level: str | None = None) -> None:
-    from common.config import Config
-
-    log_level = level or Config.LOG_LEVEL
+def setup_logging(level: str = "INFO") -> None:
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(StructuredFormatter())
 
     root = logging.getLogger()
-    root.setLevel(getattr(logging, log_level.upper(), logging.INFO))
+    root.setLevel(getattr(logging, level.upper(), logging.INFO))
     root.handlers = [handler]
 
 
