@@ -25,14 +25,7 @@ def _random_text(n: int) -> str:
     )
 
 
-@pytest.fixture(scope="module")
-def event_loop():
-    loop = asyncio.new_event_loop()
-    yield loop
-    loop.close()
-
-
-@pytest.fixture(scope="module")
+@pytest.fixture(scope="session")
 async def stub():
     from conftest import _ensure_proto_stubs
 
