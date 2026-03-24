@@ -9,8 +9,7 @@ COPY proto/ proto/
 COPY common/ common/
 COPY services/worker/main.py .
 COPY services/worker/config.py .
-COPY services/worker/text_worker.py .
-COPY services/worker/file_worker.py .
+COPY services/worker/workers/ workers/
 
 RUN python -m grpc_tools.protoc \
     -Iproto \

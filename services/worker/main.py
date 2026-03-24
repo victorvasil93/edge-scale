@@ -22,8 +22,8 @@ from common.broker import Broker
 from common.observability import setup_logging, get_logger
 from config import WorkerConfig
 
-from text_worker import process as text_process
-from file_worker import process as file_process
+from workers.text import process as text_process
+from workers.file import process as file_process
 
 logger = get_logger(__name__)
 
