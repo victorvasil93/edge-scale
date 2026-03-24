@@ -8,6 +8,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY proto/ proto/
 COPY common/ common/
 COPY services/ingestion/main.py .
+COPY services/ingestion/servicer.py .
 COPY services/ingestion/config.py .
 
 RUN python -m grpc_tools.protoc \

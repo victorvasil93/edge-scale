@@ -88,23 +88,33 @@ make test
 
 ```
 edge-scale/
-├── proto/                   Protobuf service definitions
+├── proto/                        Protobuf service definitions
 │   └── edgescale.proto
-├── common/                  Shared Python library
-│   ├── broker.py            Redis Streams + Pub/Sub broker
-│   ├── config.py            Environment-based configuration
-│   └── observability.py     Structured JSON logging
+├── common/                       Shared Python library (no config — stateless)
+│   ├── broker.py                 Redis Streams + Pub/Sub broker
+│   └── observability.py          Structured JSON logging
 ├── services/
-│   ├── ingestion/           Service A — gRPC ingestion server
-│   ├── worker/              Service B — text & file worker pool
-│   └── gateway/             REST gateway (FastAPI)
-├── frontend/                Next.js dashboard (Vercel-ready)
-├── tests/                   Integration & resilience tests
-├── scripts/                 Proto generation helpers
-├── docker-compose.yml       Full stack orchestration
-├── Makefile                 Development shortcuts
+│   ├── ingestion/                Service A — gRPC ingestion server
+│   │   ├── main.py
+│   │   └── config.py             IngestionConfig (REDIS_URL, GRPC_PORT, timeouts)
+│   ├── worker/                   Service B — text & file worker pool
+│   │   ├── main.py
+│   │   ├── config.py             WorkerConfig (REDIS_URL, concurrency, consumer group)
+│   │   └── workers/
+│   │       ├── text.py           Text word count worker
+│   │       └── file.py           File chunk worker (Lua-based atomic counting)
+│   └── gateway/                  REST gateway (FastAPI)
+│       ├── main.py
+│       └── config.py             GatewayConfig (gRPC host/port, gateway port)
+├── frontend/                     Next.js dashboard (Vercel-ready)
+├── tests/                        Integration & resilience tests
+├── scripts/                      Proto generation helpers
+├── docker-compose.yml            Full stack orchestration
+├── Makefile                      Development shortcuts
 └── README.md
 ```
+
+Each service owns its own `config.py` with only the environment variables it needs. The `common/` library is stateless — `Broker` accepts connection parameters via constructor, `setup_logging()` accepts the level as an argument.
 
 ## Deployment
 

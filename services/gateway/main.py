@@ -9,6 +9,7 @@ from __future__ import annotations
 import sys
 import time
 import uuid
+from collections import defaultdict
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -18,13 +19,14 @@ sys.path.insert(0, str(_here.parent.parent))
 
 import grpc
 from grpc import aio as grpc_aio
-from fastapi import FastAPI, File, UploadFile, HTTPException
+from fastapi import FastAPI, File, UploadFile, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 import edgescale_pb2
 import edgescale_pb2_grpc
-from common.observability import setup_logging, get_logger
+from common.logging import setup_logging, get_logger
 from config import GatewayConfig
 
 logger = get_logger(__name__)
@@ -39,6 +41,40 @@ class HeartbeatPayload(BaseModel):
 
 class TextPayload(BaseModel):
     text: str
+
+
+# ── Rate Limiter (in-memory, per-IP sliding window) ──────────────────────
+
+class RateLimiter:
+    """Fixed-window rate limiter keyed by client IP."""
+
+    def __init__(self, max_requests: int, window_seconds: int):
+        self._max = max_requests
+        self._window = window_seconds
+        self._hits: dict[str, list[float]] = defaultdict(list)
+
+    def is_allowed(self, key: str) -> bool:
+        now = time.monotonic()
+        window_start = now - self._window
+        hits = self._hits[key]
+        self._hits[key] = [t for t in hits if t > window_start]
+        if len(self._hits[key]) >= self._max:
+            return False
+        self._hits[key].append(now)
+        return True
+
+
+_limiter = RateLimiter(
+    max_requests=int(GatewayConfig.RATE_LIMIT_MAX),
+    window_seconds=int(GatewayConfig.RATE_LIMIT_WINDOW),
+)
+
+
+def _client_ip(request: Request) -> str:
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
 
 
 @asynccontextmanager
@@ -70,6 +106,22 @@ app.add_middleware(
 )
 
 
+@app.middleware("http")
+async def rate_limit(request: Request, call_next):
+    if request.url.path == "/api/health":
+        return await call_next(request)
+    ip = _client_ip(request)
+    logger.info("rate limit check", extra={"ip": ip, "path": request.url.path})
+    if not _limiter.is_allowed(ip):
+        logger.warning("rate_limited", extra={"ip": ip, "path": request.url.path})
+        return JSONResponse(
+            status_code=429,
+            content={"detail": "Too many requests"},
+            headers={"Retry-After": str(GatewayConfig.RATE_LIMIT_WINDOW)},
+        )
+    return await call_next(request)
+
+
 def _grpc_error(exc: grpc.RpcError) -> HTTPException:
     code = exc.code()
     mapping = {
@@ -94,7 +146,6 @@ async def heartbeat(payload: HeartbeatPayload):
     try:
         await app.state.stub.Heartbeat(
             edgescale_pb2.HeartbeatRequest(
-                agent_id=payload.agent_id,
                 timestamp=int(time.time()),
                 metadata=payload.metadata or {},
             )

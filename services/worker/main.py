@@ -19,7 +19,7 @@ sys.path.insert(0, str(_here))
 sys.path.insert(0, str(_here.parent.parent))
 
 from common.broker import Broker
-from common.observability import setup_logging, get_logger
+from common.logging import setup_logging, get_logger
 from config import WorkerConfig
 
 from workers.text import process as text_process

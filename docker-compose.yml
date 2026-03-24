@@ -1,8 +1,6 @@
 services:
   redis:
     image: redis:7-alpine
-    ports:
-      - "6379:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -15,8 +13,6 @@ services:
     build:
       context: .
       dockerfile: services/ingestion/Dockerfile
-    ports:
-      - "50051:50051"
     environment:
       REDIS_URL: redis://redis:6379
       GRPC_PORT: "50051"
@@ -52,6 +48,8 @@ services:
       INGESTION_GRPC_PORT: "50051"
       GATEWAY_PORT: "8080"
       LOG_LEVEL: INFO
+      RATE_LIMIT_MAX: ${RATE_LIMIT_MAX:-30}
+      RATE_LIMIT_WINDOW: ${RATE_LIMIT_WINDOW:-60}
     depends_on:
       - ingestion
     restart: unless-stopped
