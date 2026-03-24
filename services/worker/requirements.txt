@@ -1,0 +1,4 @@
+grpcio>=1.68.0
+grpcio-tools>=1.68.0
+protobuf>=5.29.0
+redis[hiredis]>=5.2.0

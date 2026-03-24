@@ -1,0 +1,60 @@
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    volumes:
+      - redis_data:/data
+
+  ingestion:
+    build:
+      context: .
+      dockerfile: services/ingestion/Dockerfile
+    ports:
+      - "50051:50051"
+    environment:
+      REDIS_URL: redis://redis:6379
+      GRPC_PORT: "50051"
+      LOG_LEVEL: INFO
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: .
+      dockerfile: services/worker/Dockerfile
+    environment:
+      REDIS_URL: redis://redis:6379
+      WORKER_CONCURRENCY: "4"
+      LOG_LEVEL: INFO
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    deploy:
+      replicas: 2
+
+  gateway:
+    build:
+      context: .
+      dockerfile: services/gateway/Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      INGESTION_GRPC_HOST: ingestion
+      INGESTION_GRPC_PORT: "50051"
+      GATEWAY_PORT: "8080"
+      LOG_LEVEL: INFO
+    depends_on:
+      - ingestion
+    restart: unless-stopped
+
+volumes:
+  redis_data:
