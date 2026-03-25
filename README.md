@@ -18,7 +18,7 @@ The ingestion service subscribes to a result channel *before* publishing the tas
 |---------|-------------|------|
 | Ingestion | gRPC server — receives heartbeats, text, file streams | 50051 |
 | Worker | Consumer pool — processes text and file chunks | — |
-| Gateway | FastAPI REST API, translates HTTP to gRPC | 8080 |
+| API | FastAPI REST API, translates HTTP to gRPC | 8080 |
 | Redis | Broker (Streams for tasks, Pub/Sub for results) | 6379 |
 
 ## Running it
