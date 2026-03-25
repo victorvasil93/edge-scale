@@ -18,49 +18,55 @@ class RPCHandler(edgescale_pb2_grpc.EdgeScaleServiceServicer):
     async def AnalyzeText(self, request, context):
         job_id = str(uuid.uuid4())
 
-        await self.broker.send_task(
-            self.config.TEXT_STREAM_KEY,
-            {"request_id": job_id, "text": request.text}
-        )
-
+        pubsub = await self.broker.subscribe_for_result(job_id)
         try:
+            await self.broker.send_task(
+                self.config.TEXT_STREAM_KEY,
+                {"request_id": job_id, "text": request.text}
+            )
+
             result = await self.broker.wait_for_result(
-                request_id=job_id,
-                timeout=self.config.RESULT_TIMEOUT
+                pubsub, timeout=self.config.RESULT_TIMEOUT
             )
             return edgescale_pb2.AnalyzeTextResponse(
-                request_id=job_id, 
+                request_id=job_id,
                 word_count=result["word_count"]
             )
         except asyncio.TimeoutError:
             context.set_code(grpc.StatusCode.DEADLINE_EXCEEDED)
             context.set_details("The worker took too long to respond.")
             return edgescale_pb2.AnalyzeTextResponse()
+        except Exception:
+            await self.broker.cleanup_listener(pubsub)
+            raise
 
     async def UploadAndAnalyzeFile(self, request_iterator, context):
         file_id = str(uuid.uuid4())
         chunk_count = 0
 
-        async for chunk in request_iterator:
-            chunk_count += 1
-            payload = {
-                "file_id": file_id,
-                "data": chunk.data.hex(),
-                "is_last": "1" if chunk.is_last else "0",
-            }
-            if chunk.is_last:
-                payload["total_chunks"] = str(chunk_count)
-            await self.broker.send_task(self.config.FILE_STREAM_KEY, payload)
-
+        pubsub = await self.broker.subscribe_for_result(file_id)
         try:
+            async for chunk in request_iterator:
+                chunk_count += 1
+                payload = {
+                    "file_id": file_id,
+                    "data": chunk.data.hex(),
+                    "is_last": "1" if chunk.is_last else "0",
+                }
+                if chunk.is_last:
+                    payload["total_chunks"] = str(chunk_count)
+                await self.broker.send_task(self.config.FILE_STREAM_KEY, payload)
+
             result = await self.broker.wait_for_result(
-                request_id=file_id,
-                timeout=self.config.FILE_RESULT_TIMEOUT
+                pubsub, timeout=self.config.FILE_RESULT_TIMEOUT
             )
             return edgescale_pb2.FileAnalysisResponse(
-                file_id=file_id, 
+                file_id=file_id,
                 word_count=result["word_count"]
             )
         except asyncio.TimeoutError:
             context.set_code(grpc.StatusCode.DEADLINE_EXCEEDED)
             return edgescale_pb2.FileAnalysisResponse()
+        except Exception:
+            await self.broker.cleanup_listener(pubsub)
+            raise

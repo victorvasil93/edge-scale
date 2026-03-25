@@ -39,20 +39,25 @@ class Broker:
 
     # --- Results (Pub/Sub) ---
 
-    async def wait_for_result(self, request_id: str, timeout: float = 30.0):
-        """
-        Creates a listener, waits for a single message, and cleans up.
-        This is much more 'human' than passing pubsub objects around.
-        """
+    async def subscribe_for_result(self, request_id: str):
+        """Subscribe to the result channel. Must be called BEFORE send_task."""
         channel = f"result:{request_id}"
         pubsub = self.redis.pubsub()
         await pubsub.subscribe(channel)
+        return pubsub
 
+    async def wait_for_result(self, pubsub, timeout: float = 30.0):
+        """Block until a result arrives on an already-subscribed channel."""
         try:
             return await asyncio.wait_for(self._get_next_msg(pubsub), timeout)
         finally:
-            await pubsub.unsubscribe(channel)
+            await pubsub.unsubscribe()
             await pubsub.aclose()
+
+    async def cleanup_listener(self, pubsub) -> None:
+        """Clean up a subscription without waiting (for error paths)."""
+        await pubsub.unsubscribe()
+        await pubsub.aclose()
 
     async def send_result(self, request_id: str, result: dict):
         """Broadcasts the result back to whoever is listening."""
