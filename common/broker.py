@@ -1,141 +1,76 @@
-"""
-Redis Streams + Pub/Sub broker for request-response over async messaging.
-
-Architecture:
-  - Tasks are published to Redis Streams (durable, consumer-group based).
-  - Results are returned via Redis Pub/Sub keyed by request_id (low-latency).
-  - Backpressure: stream length is capped; publish rejects when full.
-"""
-
-from __future__ import annotations
-
 import asyncio
 import json
-import logging
-
 import redis.asyncio as aioredis
-
-logger = logging.getLogger(__name__)
-
-RESULT_CHANNEL_PREFIX = "result:"
-
-
-class BackpressureError(Exception):
-    """Raised when the broker stream is at capacity."""
 
 
 class Broker:
-    def __init__(
-        self,
-        redis_url: str,
-        max_stream_length: int = 10_000,
-        consumer_block_ms: int = 5_000,
-    ):
-        self._redis_url = redis_url
-        self._max_stream_length = max_stream_length
-        self._consumer_block_ms = consumer_block_ms
-        self._redis: aioredis.Redis | None = None
+    def __init__(self, redis_url: str):
+        self.url = redis_url
+        self.redis = None
 
-    async def connect(self) -> None:
-        self._redis = aioredis.from_url(
-            self._redis_url, decode_responses=True
+    async def connect(self):
+        self.redis = aioredis.from_url(self.url, decode_responses=True)
+        await self.redis.ping()
+        print(f"Connected to Redis at {self.url}")
+
+    async def close(self):
+        if self.redis:
+            await self.redis.aclose()
+
+    # --- Task Management (Streams) ---
+
+    async def send_task(self, stream_name: str, data: dict):
+        """Pushes a task into a Redis stream."""
+        return await self.redis.xadd(stream_name, data, maxlen=10000)
+
+    async def listen_for_tasks(self, stream: str, group: str, consumer: str):
+        """Basic wrapper for reading from a group."""
+        return await self.redis.xreadgroup(
+            groupname=group,
+            consumername=consumer,
+            streams={stream: ">"},
+            count=1,
+            block=5000
         )
-        await self._redis.ping()
-        logger.info("broker_connected", extra={"redis_url": self._redis_url})
 
-    async def close(self) -> None:
-        if self._redis:
-            await self._redis.aclose()
+    async def acknowledge(self, stream: str, group: str, message_id: str):
+        """Tell Redis we've successfully handled the message."""
+        await self.redis.xack(stream, group, message_id)
 
-    @property
-    def redis(self) -> aioredis.Redis:
-        if self._redis is None:
-            raise RuntimeError("Broker not connected — call connect() first")
-        return self._redis
+    # --- Results (Pub/Sub) ---
 
-    # ── Task Publishing (with backpressure) ──────────────────────────────
-
-    async def publish_task(self, stream: str, data: dict) -> str:
-        length = await self.redis.xlen(stream)
-        if length >= self._max_stream_length:
-            logger.warning(
-                "backpressure_triggered",
-                extra={"stream": stream, "length": length},
-            )
-            raise BackpressureError(
-                f"Stream '{stream}' at capacity ({length}/{self._max_stream_length})"
-            )
-        msg_id = await self.redis.xadd(
-            stream, data, maxlen=self._max_stream_length
-        )
-        logger.debug("task_published", extra={"stream": stream, "msg_id": msg_id})
-        return msg_id
-
-    # ── Result Pub/Sub ───────────────────────────────────────────────────
-
-    async def setup_result_listener(self, request_id: str) -> aioredis.client.PubSub:
-        """Subscribe to the result channel. Must be called BEFORE publish_task."""
-        channel = f"{RESULT_CHANNEL_PREFIX}{request_id}"
+    async def wait_for_result(self, request_id: str, timeout: float = 30.0):
+        """
+        Creates a listener, waits for a single message, and cleans up.
+        This is much more 'human' than passing pubsub objects around.
+        """
+        channel = f"result:{request_id}"
         pubsub = self.redis.pubsub()
         await pubsub.subscribe(channel)
-        return pubsub
 
-    async def wait_for_result(
-        self, pubsub: aioredis.client.PubSub, timeout: float = 30.0
-    ) -> dict:
-        """Block until a result message arrives on an already-subscribed channel."""
         try:
-            return await asyncio.wait_for(
-                self._listen(pubsub), timeout=timeout
-            )
+            return await asyncio.wait_for(self._get_next_msg(pubsub), timeout)
         finally:
-            await pubsub.unsubscribe()
+            await pubsub.unsubscribe(channel)
             await pubsub.aclose()
 
-    async def cleanup_listener(self, pubsub: aioredis.client.PubSub) -> None:
-        await pubsub.unsubscribe()
-        await pubsub.aclose()
-
-    async def publish_result(self, request_id: str, result: dict) -> None:
-        channel = f"{RESULT_CHANNEL_PREFIX}{request_id}"
+    async def send_result(self, request_id: str, result: dict):
+        """Broadcasts the result back to whoever is listening."""
+        channel = f"result:{request_id}"
         await self.redis.publish(channel, json.dumps(result))
-        logger.debug("result_published", extra={"request_id": request_id})
 
-    # ── Consumer Groups ──────────────────────────────────────────────────
+    # --- Helpers ---
 
-    async def ensure_consumer_group(self, stream: str, group: str) -> None:
+    async def setup_group(self, stream: str, group: str):
+        """Ensures the consumer group exists without crashing if it does."""
         try:
             await self.redis.xgroup_create(stream, group, id="0", mkstream=True)
-            logger.info(
-                "consumer_group_created",
-                extra={"stream": stream, "group": group},
-            )
-        except aioredis.ResponseError as exc:
-            if "BUSYGROUP" not in str(exc):
-                raise
-
-    async def consume(
-        self,
-        stream: str,
-        group: str,
-        consumer: str,
-        count: int = 10,
-    ) -> list:
-        return await self.redis.xreadgroup(
-            group,
-            consumer,
-            {stream: ">"},
-            count=count,
-            block=self._consumer_block_ms,
-        )
-
-    async def ack(self, stream: str, group: str, msg_id: str) -> None:
-        await self.redis.xack(stream, group, msg_id)
-
-    # ── Private ──────────────────────────────────────────────────────────
+        except Exception:
+            pass
 
     @staticmethod
-    async def _listen(pubsub: aioredis.client.PubSub) -> dict:
-        async for message in pubsub.listen():
-            if message["type"] == "message":
-                return json.loads(message["data"])
+    async def _get_next_msg(pubsub):
+        """Helper to loop through pubsub messages until we get actual data."""
+        async for msg in pubsub.listen():
+            if msg["type"] == "message":
+                return json.loads(msg["data"])

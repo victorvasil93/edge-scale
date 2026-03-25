@@ -1,17 +1,11 @@
-"""
-REST/HTTP Gateway — translates HTTP requests from the frontend into gRPC
-calls to the Ingestion Service.  Deployed alongside the backend on Scaleway;
-the Vercel frontend hits this API.
-"""
-
-from __future__ import annotations
-
 import sys
 import time
 import uuid
 from collections import defaultdict
 from contextlib import asynccontextmanager
 from pathlib import Path
+
+import uvicorn
 
 _here = Path(__file__).resolve().parent
 sys.path.insert(0, str(_here))
@@ -209,8 +203,6 @@ async def upload_file(file: UploadFile = File(...)):
 
 
 if __name__ == "__main__":
-    import uvicorn
-
     cfg = GatewayConfig()
     uvicorn.run(
         "main:app",

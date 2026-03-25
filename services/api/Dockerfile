@@ -2,13 +2,13 @@ FROM python:3.12-slim AS base
 
 WORKDIR /app
 
-COPY services/gateway/requirements.txt .
+COPY services/api/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY proto/ proto/
 COPY common/ common/
-COPY services/gateway/main.py .
-COPY services/gateway/config.py .
+COPY services/api/main.py .
+COPY services/api/config.py .
 
 RUN python -m grpc_tools.protoc \
     -Iproto \
